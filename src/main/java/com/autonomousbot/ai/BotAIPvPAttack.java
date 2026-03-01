@@ -2,103 +2,101 @@ package com.autonomousbot.ai;
 
 import com.autonomousbot.ConfigHandler;
 import com.autonomousbot.entity.EntityAutonomousBot;
-import net.minecraft.entity.ai.EntityAIBase;
-import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.entity.player.Player;
+
+import java.util.EnumSet;
 
 /**
- * AI-задача: преследование и атака игрока в PvP-режиме.
+ * AI-задача: преследование и атака игрока в PvP-режиме (Minecraft 1.21.1).
  *
  * Логика:
- *  - Ищет ближайшего игрока в радиусе pvpRange (конфиг).
- *  - Преследует цель до дальности ближнего боя (2.5 блока).
+ *  - Берёт цель, выбранную BotAIPvPTarget (через getTarget()).
+ *  - При отсутствии цели — ищет ближайшего игрока в радиусе pvpRange.
+ *  - Преследует до дальности ближнего боя (2.5 блока).
  *  - Атакует с кулдауном pvpAttackCooldown тиков.
- *  - Отступает, если HP < pvpRetreatHealthFraction от максимума.
- *  - Не атакует игроков в Creative-режиме.
+ *  - Отступает при HP < pvpRetreatHealthFraction от максимума.
+ *  - Игнорирует игроков в Creative-режиме.
  */
-public class BotAIPvPAttack extends EntityAIBase {
+public class BotAIPvPAttack extends Goal {
 
     private static final double ATTACK_RANGE_SQ = 2.5 * 2.5;
 
     private final EntityAutonomousBot bot;
-    private EntityPlayer target;
-    private int attackCooldown = 0;
-    private int retreatTimer   = 0;
+    private Player target;
+    private int    attackCooldown = 0;
+    private int    retreatTimer   = 0;
 
     public BotAIPvPAttack(EntityAutonomousBot bot) {
         this.bot = bot;
-        this.setMutexBits(3); // Блокирует другие задачи движения и взгляда
+        this.setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
     }
 
-    // ─── Lifecycle ──────────────────────────────────────────────────────────────
+    // ─── Lifecycle ───────────────────────────────────────────────────────────────
 
     @Override
-    public boolean shouldExecute() {
+    public boolean canUse() {
         if (bot.getBotMode() != BotMode.PVP) return false;
 
-        // Берём цель, выбранную BotAIPvPTarget
-        target = (EntityPlayer) bot.getAttackTarget();
+        LivingEntity currentTarget = bot.getTarget();
+        target = (currentTarget instanceof Player p) ? p : null;
         if (target == null) {
-            target = bot.worldObj.getClosestPlayerToEntity(bot, ConfigHandler.pvpRange);
+            target = bot.level().getNearestPlayer(bot, ConfigHandler.getPvpRange());
         }
-
-        return target != null && !target.isDead && !target.isCreativeMode();
+        return target != null && !target.isDeadOrDying() && !target.isCreative();
     }
 
     @Override
-    public boolean continueExecuting() {
+    public boolean canContinueToUse() {
         if (bot.getBotMode() != BotMode.PVP) return false;
-        if (target == null || target.isDead || target.isCreativeMode()) return false;
+        if (target == null || target.isDeadOrDying() || target.isCreative()) return false;
 
         // Отступление при низком HP
         float healthFraction = bot.getHealth() / bot.getMaxHealth();
-        if (healthFraction < ConfigHandler.pvpRetreatHealthFraction) {
-            retreatTimer = 60; // отступаем 3 секунды
+        if (healthFraction < ConfigHandler.getPvpRetreatHealthFraction()) {
+            retreatTimer = 60; // 3 секунды
             return false;
         }
 
-        // Проверяем дальность (× 2 для гистерезиса)
-        double maxRangeSq = (ConfigHandler.pvpRange * 2.0) * (ConfigHandler.pvpRange * 2.0);
-        return bot.getDistanceSqToEntity(target) <= maxRangeSq;
+        // Гистерезис дальности (×2 от обнаружения)
+        double maxRangeSq = (ConfigHandler.getPvpRange() * 2.0) * (ConfigHandler.getPvpRange() * 2.0);
+        return bot.distanceToSqr(target) <= maxRangeSq;
     }
 
     @Override
-    public void startExecuting() {
-        attackCooldown = 0;
-    }
+    public void start() { attackCooldown = 0; }
 
     @Override
-    public void updateTask() {
+    public void tick() {
         if (target == null) return;
 
-        // Смотрим на цель
-        bot.getLookHelper().setLookPositionWithEntity(target, 30.0F, 30.0F);
-
+        bot.getLookControl().setLookAt(target, 30.0F, 30.0F);
         if (attackCooldown > 0) attackCooldown--;
         if (retreatTimer  > 0) retreatTimer--;
 
-        double distSq = bot.getDistanceSqToEntity(target);
+        double distSq = bot.distanceToSqr(target);
 
         if (distSq <= ATTACK_RANGE_SQ) {
-            // ─── Ближний бой ───────────────────────────────────────────────
-            bot.getNavigator().clearPathEntity();
-
-            if (attackCooldown == 0 && ConfigHandler.allowDamagePlayers) {
-                bot.attackEntityAsMob(target);
-                attackCooldown = ConfigHandler.pvpAttackCooldown;
+            // Ближний бой
+            bot.getNavigation().stop();
+            if (attackCooldown == 0 && ConfigHandler.isAllowDamagePlayers()) {
+                bot.doHurtTarget(target);
+                attackCooldown = ConfigHandler.getPvpAttackCooldown();
             }
         } else {
-            // ─── Преследование ─────────────────────────────────────────────
-            bot.getNavigator().tryMoveToEntityLiving(target, 0.85);
+            // Преследование
+            bot.getNavigation().moveTo(target, 0.85);
         }
 
-        bot.setAttackTarget(target);
+        bot.setTarget(target);
     }
 
     @Override
-    public void resetTask() {
+    public void stop() {
         target = null;
         attackCooldown = 0;
-        bot.setAttackTarget(null);
-        bot.getNavigator().clearPathEntity();
+        bot.setTarget(null);
+        bot.getNavigation().stop();
     }
 }

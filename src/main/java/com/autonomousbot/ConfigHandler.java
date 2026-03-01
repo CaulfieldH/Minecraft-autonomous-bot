@@ -1,123 +1,78 @@
 package com.autonomousbot;
 
 import com.autonomousbot.ai.BotMode;
-import net.minecraftforge.common.config.Configuration;
-
-import java.io.File;
+import net.neoforged.neoforge.common.ModConfigSpec;
 
 /**
- * Обработчик конфигурационного файла.
- * Файл создаётся в папке: config/autonomousbot.cfg
- *
- * Для изменения режима бота во время игры используйте команду:
- *   /bot mode <id> <pvp|resource_gathering|building>
+ * Конфигурация мода через NeoForge ModConfigSpec.
+ * Файл создаётся в: config/autonomousbot-common.toml
  */
 public class ConfigHandler {
 
-    // ─── Параметры режима ──────────────────────────────────────────────────────
+    private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
 
-    /** Режим бота по умолчанию при спавне */
-    public static BotMode defaultMode = BotMode.RESOURCE_GATHERING;
+    private static final ModConfigSpec.EnumValue<BotMode>  DEFAULT_MODE;
+    private static final ModConfigSpec.IntValue             GATHERING_RANGE;
+    private static final ModConfigSpec.IntValue             PVP_RANGE;
+    private static final ModConfigSpec.IntValue             PVP_ATTACK_COOLDOWN;
+    private static final ModConfigSpec.DoubleValue          PVP_RETREAT_HEALTH_FRACTION;
+    private static final ModConfigSpec.BooleanValue         ALLOW_DAMAGE_PLAYERS;
+    private static final ModConfigSpec.DoubleValue          MOVE_SPEED;
+    private static final ModConfigSpec.DoubleValue          MAX_HEALTH;
+    private static final ModConfigSpec.DoubleValue          ATTACK_DAMAGE;
 
-    /** Радиус поиска ресурсов (блоки) */
-    public static int gatheringRange = 32;
+    public static final ModConfigSpec SPEC;
 
-    /** Радиус обнаружения игроков в PvP (блоки) */
-    public static int pvpRange = 20;
+    static {
+        BUILDER.comment("AutonomousBot Configuration").push("general");
 
-    /** Задержка между атаками в PvP (тиков; 20 = 1 сек) */
-    public static int pvpAttackCooldown = 20;
+        DEFAULT_MODE = BUILDER
+            .comment("Default bot mode on spawn. Options: resource_gathering, building, pvp")
+            .defineEnum("defaultMode", BotMode.RESOURCE_GATHERING);
 
-    /** Порог здоровья для отступления в PvP (0.0–1.0) */
-    public static float pvpRetreatHealthFraction = 0.25f;
+        GATHERING_RANGE = BUILDER
+            .comment("Search radius (blocks) for resources in gathering mode")
+            .defineInRange("gatheringRange", 32, 8, 64);
 
-    /** Разрешить боту наносить урон игрокам в PvP */
-    public static boolean allowDamagePlayers = true;
+        PVP_RANGE = BUILDER
+            .comment("Detection radius (blocks) for enemy players in PvP mode")
+            .defineInRange("pvpRange", 20, 5, 50);
 
-    /** Скорость передвижения (0.1–1.0; стандарт игрока ~0.1) */
-    public static double moveSpeed = 0.3;
+        PVP_ATTACK_COOLDOWN = BUILDER
+            .comment("Ticks between melee attacks in PvP (20 ticks = 1 second)")
+            .defineInRange("pvpAttackCooldown", 20, 5, 60);
 
-    /** Здоровье бота (единицы; 20 = 10 сердец) */
-    public static double maxHealth = 20.0;
+        PVP_RETREAT_HEALTH_FRACTION = BUILDER
+            .comment("Health fraction (0.0-1.0) below which bot retreats in PvP")
+            .defineInRange("pvpRetreatHealthFraction", 0.25, 0.0, 0.9);
 
-    /** Урон бота за удар (единицы; 3 = 1.5 сердца) */
-    public static double attackDamage = 3.0;
+        ALLOW_DAMAGE_PLAYERS = BUILDER
+            .comment("Allow the bot to deal damage to players in PvP mode")
+            .define("allowDamagePlayers", true);
 
-    // ─── Инициализация ─────────────────────────────────────────────────────────
+        MOVE_SPEED = BUILDER
+            .comment("Bot movement speed (0.1-1.0; default player ~0.1)")
+            .defineInRange("moveSpeed", 0.3, 0.1, 1.0);
 
-    public static void init(File configFile) {
-        Configuration config = new Configuration(configFile);
-        try {
-            config.load();
+        MAX_HEALTH = BUILDER
+            .comment("Bot max health in units (20 = 10 hearts)")
+            .defineInRange("maxHealth", 20.0, 1.0, 200.0);
 
-            // --- Раздел: General ---
-            defaultMode = BotMode.fromString(config.getString(
-                "defaultMode",
-                Configuration.CATEGORY_GENERAL,
-                "resource_gathering",
-                "Default bot mode on spawn. Options: resource_gathering, building, pvp"
-            ));
+        ATTACK_DAMAGE = BUILDER
+            .comment("Bot attack damage per hit in units (3 = 1.5 hearts)")
+            .defineInRange("attackDamage", 3.0, 0.5, 30.0);
 
-            gatheringRange = config.getInt(
-                "gatheringRange",
-                Configuration.CATEGORY_GENERAL,
-                32, 8, 64,
-                "Search radius (blocks) for resources in gathering mode"
-            );
-
-            pvpRange = config.getInt(
-                "pvpRange",
-                Configuration.CATEGORY_GENERAL,
-                20, 5, 50,
-                "Detection radius (blocks) for enemy players in PvP mode"
-            );
-
-            pvpAttackCooldown = config.getInt(
-                "pvpAttackCooldown",
-                Configuration.CATEGORY_GENERAL,
-                20, 5, 60,
-                "Ticks between PvP melee attacks (20 ticks = 1 second)"
-            );
-
-            pvpRetreatHealthFraction = config.getFloat(
-                "pvpRetreatHealthFraction",
-                Configuration.CATEGORY_GENERAL,
-                0.25f, 0.0f, 0.9f,
-                "Health fraction (0.0-1.0) below which bot retreats in PvP"
-            );
-
-            allowDamagePlayers = config.getBoolean(
-                "allowDamagePlayers",
-                Configuration.CATEGORY_GENERAL,
-                true,
-                "Allow the bot to deal damage to players in PvP mode"
-            );
-
-            moveSpeed = config.getFloat(
-                "moveSpeed",
-                Configuration.CATEGORY_GENERAL,
-                0.3f, 0.1f, 1.0f,
-                "Bot movement speed (0.1-1.0)"
-            );
-
-            maxHealth = config.getFloat(
-                "maxHealth",
-                Configuration.CATEGORY_GENERAL,
-                20.0f, 1.0f, 200.0f,
-                "Bot max health in units (20 = 10 hearts)"
-            );
-
-            attackDamage = config.getFloat(
-                "attackDamage",
-                Configuration.CATEGORY_GENERAL,
-                3.0f, 0.5f, 30.0f,
-                "Bot attack damage per hit in units"
-            );
-
-        } finally {
-            if (config.hasChanged()) {
-                config.save();
-            }
-        }
+        BUILDER.pop();
+        SPEC = BUILDER.build();
     }
+
+    public static BotMode getDefaultMode()              { return DEFAULT_MODE.get(); }
+    public static int     getGatheringRange()           { return GATHERING_RANGE.get(); }
+    public static int     getPvpRange()                 { return PVP_RANGE.get(); }
+    public static int     getPvpAttackCooldown()        { return PVP_ATTACK_COOLDOWN.get(); }
+    public static double  getPvpRetreatHealthFraction() { return PVP_RETREAT_HEALTH_FRACTION.get(); }
+    public static boolean isAllowDamagePlayers()        { return ALLOW_DAMAGE_PLAYERS.get(); }
+    public static double  getMoveSpeed()                { return MOVE_SPEED.get(); }
+    public static double  getMaxHealth()                { return MAX_HEALTH.get(); }
+    public static double  getAttackDamage()             { return ATTACK_DAMAGE.get(); }
 }

@@ -2,41 +2,44 @@ package com.autonomousbot.ai;
 
 import com.autonomousbot.ConfigHandler;
 import com.autonomousbot.entity.EntityAutonomousBot;
-import net.minecraft.entity.ai.EntityAIBase;
-import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.entity.player.Player;
+
+import java.util.EnumSet;
 
 /**
- * AI-задача: поиск ближайшей цели в PvP-режиме.
- * Запускается один раз и передаёт цель боту через setAttackTarget().
+ * AI-задача: поиск ближайшей цели в PvP-режиме (Minecraft 1.21.1).
+ *
+ * Запускается однократно, передаёт цель боту через setTarget(),
+ * после чего немедленно завершает работу (canContinueToUse = false).
  * Непосредственное преследование и атака — в BotAIPvPAttack.
  */
-public class BotAIPvPTarget extends EntityAIBase {
+public class BotAIPvPTarget extends Goal {
 
     private final EntityAutonomousBot bot;
 
     public BotAIPvPTarget(EntityAutonomousBot bot) {
         this.bot = bot;
-        this.setMutexBits(0); // Таргетинг не блокирует движение
+        this.setFlags(EnumSet.noneOf(Goal.Flag.class)); // не блокирует движение
     }
 
     @Override
-    public boolean shouldExecute() {
+    public boolean canUse() {
         if (bot.getBotMode() != BotMode.PVP) return false;
-        if (bot.getAttackTarget() != null && !bot.getAttackTarget().isDead) return false;
 
-        EntityPlayer nearest = bot.worldObj.getClosestPlayerToEntity(
-            bot, ConfigHandler.pvpRange
-        );
+        // Не перебиваем живую цель
+        if (bot.getTarget() != null && !bot.getTarget().isDeadOrDying()) return false;
 
-        if (nearest != null && !nearest.isCreativeMode() && !nearest.isDead) {
-            bot.setAttackTarget(nearest);
+        Player nearest = bot.level().getNearestPlayer(bot, ConfigHandler.getPvpRange());
+        if (nearest != null && !nearest.isCreative() && !nearest.isDeadOrDying()) {
+            bot.setTarget(nearest);
             return true;
         }
         return false;
     }
 
     @Override
-    public boolean continueExecuting() {
+    public boolean canContinueToUse() {
         // Только устанавливает цель, не продолжает сам
         return false;
     }

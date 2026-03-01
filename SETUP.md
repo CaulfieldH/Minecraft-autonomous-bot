@@ -1,6 +1,6 @@
 # AutonomousBot — Руководство по настройке и запуску
 
-> Мод для **MinecraftEdu 1.7.10** (Forge `10.13.4.1614`)
+> Мод для **Minecraft 1.21.1** + **NeoForge 21.1.x**
 > Автономный NPC-бот с тремя режимами: сбор ресурсов, строительство, PvP.
 
 ---
@@ -13,165 +13,165 @@
 - [Конфигурационный файл](#конфигурационный-файл)
 - [Игровые команды](#игровые-команды)
 - [Структура проекта](#структура-проекта)
+- [Поведение бота](#поведение-бота)
 - [Часто задаваемые вопросы](#часто-задаваемые-вопросы)
 
 ---
 
 ## Требования
 
-| Компонент          | Версия / ссылка                                          |
-|--------------------|----------------------------------------------------------|
-| Java JDK           | **8** (1.8.x)                                            |
-| Minecraft          | **1.7.10** (через MinecraftEdu или обычный лаунчер)      |
-| Minecraft Forge    | **10.13.4.1614** (рекомендуемая сборка для 1.7.10)       |
-| Gradle             | Включён в Forge MDK (wrapper), или установите **2.14**   |
-| Git (опционально)  | Для клонирования репозитория                             |
+| Компонент        | Версия                                                               |
+|------------------|----------------------------------------------------------------------|
+| Java JDK         | **21** (Eclipse Temurin / Oracle JDK 21+)                           |
+| Minecraft        | **1.21.1**                                                           |
+| NeoForge         | **21.1.77** (или любой 21.1.x)                                      |
+| Gradle           | Включён в репозиторий через Wrapper (использует Gradle 8.x)          |
+| Git              | Для клонирования репозитория                                         |
+
+> **Важно:** Java 8 или 17 **не подходят**. Minecraft 1.21.1 требует Java 21.
 
 ---
 
 ## Пошаговая сборка мода
 
-### Шаг 1 — Скачать Forge MDK
+### Шаг 1 — Установить Java 21
 
-1. Перейдите на https://files.minecraftforge.net/net/minecraftforge/forge/index_1.7.10.html
-2. Найдите версию **10.13.4.1614** → **Mdk** (или Src) → скачайте zip.
-3. Распакуйте MDK в любую папку, например `C:\forge-mdk\`.
+Скачайте JDK 21 (например, Eclipse Temurin):
+https://adoptium.net/temurin/releases/?version=21
 
-### Шаг 2 — Скопировать исходники мода
-
-Скопируйте всю папку `autonomousbot-mod/` в корень MDK, заменив `build.gradle`,
-`gradle.properties`, `settings.gradle` и папку `src/`:
-
-```
-forge-mdk/
-├── build.gradle          ← из нашего проекта
-├── gradle.properties     ← из нашего проекта
-├── settings.gradle       ← из нашего проекта
-├── gradlew
-├── gradlew.bat
-└── src/
-    └── main/
-        ├── java/com/autonomousbot/   ← наш код
-        └── resources/                ← mcmod.info, pack.mcmeta
+Проверьте установку:
+```bash
+java -version
+# Должно быть: openjdk version "21.x.x" ...
 ```
 
-### Шаг 3 — Настроить рабочее пространство Forge
+### Шаг 2 — Скачать NeoForge MDK (опционально)
 
-Откройте терминал/командную строку в папке MDK:
+Если вы хотите использовать официальный MDK как основу:
+1. Перейдите на https://neoforged.net/
+2. Найдите версию **21.1.77** → скачайте MDK.
+3. Распакуйте в любую папку.
+
+Если используете **этот репозиторий** напрямую — Шаг 2 можно пропустить.
+Все файлы конфигурации сборки уже находятся в корне проекта.
+
+### Шаг 3 — Клонировать / скопировать исходники
 
 ```bash
-# Windows
-gradlew.bat setupDecompWorkspace
-
-# Linux / macOS
-chmod +x gradlew
-./gradlew setupDecompWorkspace
+git clone https://github.com/CaulfieldH/Minecraft-autonomous-bot.git
+cd Minecraft-autonomous-bot/autonomousbot-mod
 ```
 
-> ⏳ Первый запуск займёт 10–20 минут — Gradle скачивает зависимости и декомпилирует Minecraft.
+Структура совместима с MDK — все файлы уже на своих местах:
+
+```
+autonomousbot-mod/
+├── build.gradle
+├── gradle.properties
+├── settings.gradle
+├── gradlew  (Linux/macOS)
+├── gradlew.bat  (Windows)
+└── src/main/
+    ├── java/com/autonomousbot/
+    └── resources/
+```
 
 ### Шаг 4 — Собрать JAR
 
+Откройте терминал в папке `autonomousbot-mod/` и выполните:
+
 ```bash
+# Linux / macOS
+chmod +x gradlew
+./gradlew build
+
 # Windows
 gradlew.bat build
-
-# Linux / macOS
-./gradlew build
 ```
 
-Готовый файл появится в:
+> **Первый запуск** займёт несколько минут — Gradle скачает NeoForge и зависимости.
 
+Готовый JAR появится в:
 ```
-build/libs/AutonomousBot-1.7.10-1.0.0.jar
+build/libs/autonomousbot-2.0.0.jar
 ```
 
-> Если сборка завершается ошибкой `Could not resolve net.minecraftforge.gradle:ForgeGradle:1.2-SNAPSHOT`,
-> замените строку в `build.gradle`:
-> ```groovy
-> classpath 'net.minecraftforge.gradle:ForgeGradle:1.2-SNAPSHOT'
-> ```
-> на форк с поддержкой современных JVM:
-> ```groovy
-> classpath 'com.anatawa12.forge:ForgeGradle:1.2-1.0.3'
-> ```
-> и добавьте репозиторий:
-> ```groovy
-> maven { url 'https://maven.minecraftforge.net' }
-> ```
+### Шаг 5 — Запустить тестовый клиент (опционально)
+
+```bash
+# Запустить клиент Minecraft с модом для тестирования
+./gradlew runClient
+
+# Запустить выделенный сервер
+./gradlew runServer
+```
 
 ---
 
 ## Установка на сервер / клиент
 
-### Серверная установка (MinecraftEdu Server / Forge Server)
+### Установка NeoForge-сервера
 
-1. Убедитесь, что сервер запущен с **Forge 10.13.4.1614** для 1.7.10.
-2. Положите `AutonomousBot-1.7.10-1.0.0.jar` в папку `mods/` сервера.
-3. Запустите сервер — конфиг создастся автоматически:
+1. Скачайте NeoForge-инсталлятор для 1.21.1:
+   https://neoforged.net/ → Releases → 21.1.77
+2. Запустите инсталлятор:
+   ```bash
+   java -jar neoforge-21.1.77-installer.jar --installServer
    ```
-   server/config/autonomousbot.cfg
+3. Скопируйте `autonomousbot-2.0.0.jar` в папку `mods/`.
+4. Запустите сервер — конфиг создастся автоматически:
    ```
-4. При необходимости отредактируйте конфиг и перезапустите сервер.
+   config/autonomousbot-common.toml
+   ```
 
-### Клиентская установка
+### Установка на клиент
 
-1. Откройте папку `.minecraft` (или `.minecraftEdu`):
-   - Windows: `%AppData%\MinecraftEdu\`
-   - macOS:   `~/Library/Application Support/MinecraftEdu/`
-   - Linux:   `~/.minecraftEdu/`
-2. Скопируйте JAR в папку `mods/`.
-3. Запустите клиент с профилем Forge 1.7.10.
+1. Установите NeoForge 21.1.77 через официальный инсталлятор или лаунчер (CurseForge, Modrinth).
+2. Скопируйте `autonomousbot-2.0.0.jar` в папку `.minecraft/mods/`.
+3. Запустите клиент с профилем NeoForge 1.21.1.
 
-> **Важно:** мод нужен **и на клиенте, и на сервере**. Серверная сторона управляет AI,
-> клиентская — рендером.
+> **Важно:** мод нужен **и на клиенте, и на сервере**.
 
 ---
 
 ## Конфигурационный файл
 
-Путь: `config/autonomousbot.cfg`
+Путь: `config/autonomousbot-common.toml`
 
-Файл создаётся автоматически при первом запуске. Пример с пояснениями:
+Файл создаётся автоматически при первом запуске. Пример:
 
-```properties
-####################
-# general
-####################
-general {
+```toml
+["general"]
     # Default bot mode on spawn. Options: resource_gathering, building, pvp
-    S:defaultMode=resource_gathering
+    defaultMode = "resource_gathering"
 
-    # Search radius (blocks) for resources in gathering mode [range: 8 ~ 64, default: 32]
-    I:gatheringRange=32
+    # Search radius (blocks) for resources in gathering mode [range: 8 ~ 64]
+    gatheringRange = 32
 
-    # Detection radius (blocks) for enemy players in PvP mode [range: 5 ~ 50, default: 20]
-    I:pvpRange=20
+    # Detection radius (blocks) for enemy players in PvP mode [range: 5 ~ 50]
+    pvpRange = 20
 
-    # Ticks between PvP melee attacks (20 ticks = 1 second) [range: 5 ~ 60, default: 20]
-    I:pvpAttackCooldown=20
+    # Ticks between PvP melee attacks (20 ticks = 1 second) [range: 5 ~ 60]
+    pvpAttackCooldown = 20
 
-    # Health fraction (0.0–1.0) below which bot retreats in PvP [range: 0.0 ~ 0.9, default: 0.25]
-    S:pvpRetreatHealthFraction=0.25
+    # Health fraction (0.0–1.0) below which bot retreats in PvP [range: 0.0 ~ 0.9]
+    pvpRetreatHealthFraction = 0.25
 
-    # Allow the bot to deal damage to players in PvP mode [default: true]
-    B:allowDamagePlayers=true
+    # Allow the bot to deal damage to players in PvP mode
+    allowDamagePlayers = true
 
-    # Bot movement speed (0.1–1.0) [default: 0.3]
-    S:moveSpeed=0.3
+    # Bot movement speed [range: 0.1 ~ 1.0]
+    moveSpeed = 0.3
 
-    # Bot max health in units (20 = 10 hearts) [range: 1.0 ~ 200.0, default: 20.0]
-    S:maxHealth=20.0
+    # Bot max health in units (20 = 10 hearts) [range: 1.0 ~ 200.0]
+    maxHealth = 20.0
 
-    # Bot attack damage per hit in units [range: 0.5 ~ 30.0, default: 3.0]
-    S:attackDamage=3.0
-}
+    # Bot attack damage per hit in units (3 = 1.5 hearts) [range: 0.5 ~ 30.0]
+    attackDamage = 3.0
 ```
 
-### Быстрое переключение режима по умолчанию
-
-Отредактируйте `S:defaultMode=pvp` и перезапустите сервер.
-Уже спавненных ботов переключайте командой `/bot mode`.
+Изменения в конфиге применяются **после перезапуска сервера**.
+Для смены режима уже спавненным ботам используйте команду `/bot mode`.
 
 ---
 
@@ -181,15 +181,17 @@ general {
 
 | Команда | Описание |
 |---------|----------|
-| `/bot spawn` | Спавнит бота рядом с вами |
+| `/bot spawn` | Спавнит бота в 2 блоках от вас |
 | `/bot spawn <x> <y> <z>` | Спавнит бота по координатам |
 | `/bot kill <id>` | Удаляет бота с указанным ID |
-| `/bot mode <id> resource_gathering` | Режим сбора ресурсов |
-| `/bot mode <id> building` | Режим строительства |
-| `/bot mode <id> pvp` | Режим PvP |
-| `/bot info <id>` | Показывает HP, режим, позицию и инвентарь бота |
+| `/bot mode <id> resource_gathering` | Переключить в режим сбора ресурсов |
+| `/bot mode <id> building` | Переключить в режим строительства |
+| `/bot mode <id> pvp` | Переключить в режим PvP |
+| `/bot info <id>` | Показывает HP, режим, позицию и инвентарь |
 | `/bot list` | Список всех активных ботов |
-| `/bot buildreset <id>` | Сброс флага «убежище построено» (бот построит ещё одно) |
+| `/bot buildreset <id>` | Сбросить флаг «убежище построено» |
+
+> Команды поддерживают **Tab-автодополнение**: наберите `/bot m` + Tab.
 
 ### Примеры
 
@@ -198,7 +200,6 @@ general {
 /bot spawn 100 64 200
 /bot list
 /bot mode 42 pvp
-/bot mode 42 resource_gathering
 /bot info 42
 /bot kill 42
 /bot buildreset 42
@@ -210,91 +211,112 @@ general {
 
 ```
 autonomousbot-mod/
-├── build.gradle                                    ← Forge/Gradle сборка
-├── gradle.properties                               ← Версии
-├── settings.gradle                                 ← Имя проекта
+├── build.gradle                         ← NeoForge / Gradle 8 сборка
+├── gradle.properties                    ← Версии (mod_version, neoforge_version)
+├── settings.gradle                      ← Имя проекта, репозитории плагинов
 └── src/main/
     ├── java/com/autonomousbot/
-    │   ├── AutonomousBot.java          ← @Mod: точка входа, регистрация
-    │   ├── ConfigHandler.java          ← Чтение/запись autonomousbot.cfg
-    │   ├── CommandBotControl.java      ← Команда /bot
-    │   ├── proxy/
-    │   │   ├── CommonProxy.java        ← Серверный прокси
-    │   │   └── ClientProxy.java        ← Клиентский прокси (рендер)
+    │   ├── AutonomousBot.java           ← @Mod: регистрация, атрибуты, команды
+    │   ├── ConfigHandler.java           ← ModConfigSpec → autonomousbot-common.toml
+    │   ├── CommandBotControl.java       ← Brigadier-команда /bot
     │   ├── entity/
-    │   │   └── EntityAutonomousBot.java ← Сущность бота + инвентарь
+    │   │   └── EntityAutonomousBot.java ← Сущность бота (Monster + инвентарь)
     │   └── ai/
-    │       ├── BotMode.java            ← Enum режимов (3 штуки)
-    │       ├── BotAIGatherResources.java ← AI: добыча ресурсов
-    │       ├── BotAIBuildShelter.java  ← AI: строительство 5×5×4 дома
-    │       ├── BotAIPvPAttack.java     ← AI: преследование и атака
-    │       ├── BotAIPvPTarget.java     ← AI: выбор цели в PvP
-    │       └── BotAICollectItems.java  ← AI: подбор выпавших предметов
+    │       ├── BotMode.java             ← Enum: RESOURCE_GATHERING / BUILDING / PVP
+    │       ├── BotAIGatherResources.java ← Goal: добыча (теги BlockTags)
+    │       ├── BotAIBuildShelter.java   ← Goal: постройка укрытия 5×5×4
+    │       ├── BotAIPvPAttack.java      ← Goal: преследование и атака
+    │       ├── BotAIPvPTarget.java      ← Goal: выбор цели в PvP
+    │       └── BotAICollectItems.java   ← Goal: подбор ItemEntity с земли
     └── resources/
-        ├── mcmod.info                  ← Метаданные мода
-        └── pack.mcmeta                 ← Формат ресурс-пака
+        ├── META-INF/
+        │   └── neoforge.mods.toml       ← Метаданные мода (заменяет mcmod.info)
+        └── pack.mcmeta                  ← Формат ресурс-пака (pack_format: 34)
 ```
 
 ---
 
 ## Поведение бота
 
-### Режим `resource_gathering` (Сбор ресурсов)
+### Режим `resource_gathering` — Сбор ресурсов
 
-- Сканирует блоки в радиусе `gatheringRange` (по умолчанию 32 блока).
+- Сканирует блоки в радиусе `gatheringRange` (по умолчанию 32) с шагом 2 блока.
 - Приоритет добычи: **алмазная руда → золото → железо → уголь → дерево → камень/песок**.
-- Идёт к блоку, ждёт 2–4 секунды (имитация ломания) и убирает блок.
-- Выпавшие предметы подбирает автоматически (AI BotAICollectItems).
-- Ищет следующую цель сразу после.
+- Использует теги блоков (`BlockTags.DIAMOND_ORES` и др.) — автоматически охватывает
+  обычную и глубинную (deepslate) разновидности руды.
+- Добыча занимает 2–4 секунды в зависимости от типа блока.
+- Выпавшие предметы подбирает автоматически (AI `BotAICollectItems`).
 
-### Режим `building` (Строительство)
+### Режим `building` — Строительство
 
-- Отходит на ~10 блоков к востоку, находит уровень земли.
-- Строит **5×5×4 коробку** из блоков грязи (dirt):
+- Отходит ~10 блоков к востоку, находит поверхность земли.
+- Строит **5×5×4 коробку** из блоков грязи (Dirt):
   - Стены по периметру, высота 3 блока.
-  - Дверной проём (2×1) на южной стене.
+  - Дверной проём (2×1) на северной стене.
   - Полная крыша сверху.
 - После завершения переходит в режим ожидания.
 - Сбросить и построить заново: `/bot buildreset <id>`.
 
-### Режим `pvp` (PvP-бой)
+### Режим `pvp` — PvP-бой
 
 - Ищет ближайшего игрока в радиусе `pvpRange` (20 блоков).
 - **Не атакует игроков в Creative-режиме.**
 - Преследует и атакует в ближнем бою, кулдаун `pvpAttackCooldown` тиков.
-- При HP < 25% отступает на 3 секунды, затем возобновляет атаку.
-- Не подбирает предметы во время активного боя.
+- При HP < 25% от максимума отступает на 3 секунды.
+- Не отвлекается на предметы во время активного преследования.
+
+---
+
+## Ключевые отличия от версии 1.7.10
+
+| Аспект | Старая версия (1.7.10 / Forge) | Новая версия (1.21.1 / NeoForge) |
+|--------|-------------------------------|----------------------------------|
+| Загрузчик | Forge 10.13.x | **NeoForge 21.1.x** |
+| Java | 8 | **21** |
+| Регистрация сущности | `EntityRegistry.registerModEntity` | **`DeferredRegister<EntityType<?>>`** |
+| Метаданные мода | `mcmod.info` | **`META-INF/neoforge.mods.toml`** |
+| Конфиг | `Configuration` (`.cfg`) | **`ModConfigSpec`** (`.toml`) |
+| Команды | `CommandBase` | **Brigadier** (Tab-дополнение из коробки) |
+| AI-задачи | `EntityAIBase` | **`Goal`** |
+| Методы AI | `shouldExecute` / `updateTask` | **`canUse` / `tick`** |
+| Атрибуты | `applyEntityAttributes()` | **`createAttributes()` static + Event** |
+| NBT | `writeEntityToNBT` / `readEntityFromNBT` | **`addAdditionalSaveData` / `readAdditionalSaveData`** |
+| Мир | `worldObj` | **`level()`** |
+| Навигация | `getNavigator().tryMoveToXYZ()` | **`getNavigation().moveTo()`** |
+| Теги блоков | конкретные блоки (`Blocks.gold_ore`) | **`BlockTags.GOLD_ORES`** (все варианты) |
+| Удаление сущности | `setDead()` | **`discard()`** |
+| Прокси-классы | `ClientProxy / CommonProxy` | **Удалены** (не нужны) |
 
 ---
 
 ## Часто задаваемые вопросы
 
-**Q: Бот не двигается / стоит на месте**
-A: Убедитесь, что вокруг нет блоков-преград. Бот использует стандартный
-   патфайндинг Forge — он не обходит очень узкие проходы.
+**Q: Бот не движется / стоит на месте**
+A: Убедитесь, что вокруг нет преград. Бот использует стандартный NeoForge-патфайндинг.
+   Также проверьте, что бот находится в загруженном чанке.
 
-**Q: Ошибка при сборке: `Could not resolve ForgeGradle`**
-A: Старые серверы Maven недоступны. Используйте форк anatawa12 (см. Шаг 4).
+**Q: Ошибка сборки: `Could not resolve net.neoforged:neoforge`**
+A: Убедитесь, что в `settings.gradle` присутствует репозиторий NeoForge:
+   `maven { url = 'https://maven.neoforged.net/releases' }`.
 
 **Q: Несколько ботов конфликтуют**
-A: Нормально — боты независимы, каждый ищет свои ресурсы.
-   В PvP-режиме они могут атаковать одну цель.
+A: Это нормально — каждый бот независим. В режиме gathering они могут
+   пытаться добыть один и тот же блок, но первый успевшего «съест» его.
 
-**Q: Могу ли я сделать бота дружественным (не атаковать конкретных игроков)?**
-A: В текущей версии — нет. Бот в PvP атакует всех игроков не в Creative.
-   Для белого списка потребуется доработка `BotAIPvPTarget`.
+**Q: Как отключить PvP-урон для тестирования?**
+A: Установите в конфиге: `allowDamagePlayers = false`. Бот будет преследовать,
+   но не наносить урон.
 
-**Q: Мод работает на чистом Minecraft 1.7.10 без MinecraftEdu?**
-A: Да. MinecraftEdu 1.7.10 основан на стандартном Forge-Minecraft, поэтому мод
-   совместим с обоими вариантами.
+**Q: Мод работает на клиенте без сервера (singleplayer)?**
+A: Да. В одиночной игре серверная логика работает локально.
 
 **Q: Как добавить больше ботов?**
-A: Вызовите `/bot spawn` несколько раз. Каждый бот получает уникальный ID.
+A: Вызывайте `/bot spawn` несколько раз. Каждый бот получает уникальный ID.
    Смотрите список через `/bot list`.
 
 ---
 
 ## Лицензия
 
-Исходный код предоставляется «как есть» для образовательных целей в рамках MinecraftEdu.
+Исходный код предоставляется для образовательных и некоммерческих целей.
 Свободно используйте и модифицируйте для своих проектов.

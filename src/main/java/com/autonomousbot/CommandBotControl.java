@@ -2,263 +2,221 @@ package com.autonomousbot;
 
 import com.autonomousbot.ai.BotMode;
 import com.autonomousbot.entity.EntityAutonomousBot;
-import net.minecraft.command.CommandBase;
-import net.minecraft.command.ICommandSender;
-import net.minecraft.entity.Entity;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.util.ChatComponentText;
-import net.minecraft.util.EnumChatFormatting;
-import net.minecraft.world.WorldServer;
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import net.minecraft.ChatFormatting;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.coordinates.Vec3Argument;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**
- * Команда /bot — управление автономными ботами в игре.
+ * Команда /bot — управление автономными ботами.
  *
- * Использование:
- *   /bot spawn [x y z]                          — спавнит бота (рядом или по координатам)
- *   /bot kill <id>                               — удаляет бота
+ * Использование (требуется уровень оператора 2):
+ *   /bot spawn [x y z]                              — спавнит бота
+ *   /bot kill <id>                                   — удаляет бота
  *   /bot mode <id> <pvp|resource_gathering|building> — переключает режим
- *   /bot info <id>                               — информация о боте
- *   /bot list                                    — список всех ботов
- *   /bot buildreset <id>                         — сбросить флаг «убежище построено»
+ *   /bot info <id>                                   — информация о боте
+ *   /bot list                                        — список всех ботов
+ *   /bot buildreset <id>                             — сбросить флаг постройки
  *
- * Требует права оператора (уровень 2).
+ * Реализован на Brigadier (стандарт с Minecraft 1.13+).
  */
-public class CommandBotControl extends CommandBase {
+public class CommandBotControl {
 
-    private static final String COLOR_HEADER  = EnumChatFormatting.YELLOW + "";
-    private static final String COLOR_OK      = EnumChatFormatting.GREEN  + "";
-    private static final String COLOR_ERROR   = EnumChatFormatting.RED    + "";
-    private static final String COLOR_INFO    = EnumChatFormatting.AQUA   + "";
-    private static final String COLOR_RESET   = EnumChatFormatting.WHITE  + "";
+    public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
+        dispatcher.register(
+            Commands.literal("bot")
+                .requires(source -> source.hasPermission(2))
+                .executes(ctx -> showHelp(ctx.getSource()))
 
-    // ─── ICommand ───────────────────────────────────────────────────────────────
+                .then(Commands.literal("spawn")
+                    .executes(ctx -> spawnBot(ctx.getSource(), null))
+                    .then(Commands.argument("pos", Vec3Argument.vec3())
+                        .executes(ctx -> spawnBot(ctx.getSource(),
+                            Vec3Argument.getVec3(ctx, "pos")))))
 
-    @Override
-    public String getCommandName() { return "bot"; }
+                .then(Commands.literal("kill")
+                    .then(Commands.argument("id", IntegerArgumentType.integer(0))
+                        .executes(ctx -> killBot(ctx.getSource(),
+                            IntegerArgumentType.getInteger(ctx, "id")))))
 
-    @Override
-    public String getCommandUsage(ICommandSender sender) {
-        return "/bot <spawn|kill|mode|info|list|buildreset>";
-    }
+                .then(Commands.literal("mode")
+                    .then(Commands.argument("id", IntegerArgumentType.integer(0))
+                        .then(Commands.argument("mode", StringArgumentType.word())
+                            .suggests((ctx, builder) -> {
+                                builder.suggest("pvp");
+                                builder.suggest("resource_gathering");
+                                builder.suggest("building");
+                                return builder.buildFuture();
+                            })
+                            .executes(ctx -> setMode(ctx.getSource(),
+                                IntegerArgumentType.getInteger(ctx, "id"),
+                                StringArgumentType.getString(ctx, "mode"))))))
 
-    @Override
-    public int getRequiredPermissionLevel() { return 2; }
+                .then(Commands.literal("info")
+                    .then(Commands.argument("id", IntegerArgumentType.integer(0))
+                        .executes(ctx -> botInfo(ctx.getSource(),
+                            IntegerArgumentType.getInteger(ctx, "id")))))
 
-    @Override
-    public boolean canCommandSenderUseCommand(ICommandSender sender) { return true; }
+                .then(Commands.literal("list")
+                    .executes(ctx -> listBots(ctx.getSource())))
 
-    // ─── Dispatch ───────────────────────────────────────────────────────────────
-
-    @Override
-    public void processCommand(ICommandSender sender, String[] args) {
-        if (args.length == 0) { showHelp(sender); return; }
-
-        switch (args[0].toLowerCase()) {
-            case "spawn":      cmdSpawn(sender, args);      break;
-            case "kill":       cmdKill(sender, args);       break;
-            case "mode":       cmdMode(sender, args);       break;
-            case "info":       cmdInfo(sender, args);       break;
-            case "list":       cmdList(sender);             break;
-            case "buildreset": cmdBuildReset(sender, args); break;
-            default:           showHelp(sender);
-        }
+                .then(Commands.literal("buildreset")
+                    .then(Commands.argument("id", IntegerArgumentType.integer(0))
+                        .executes(ctx -> buildReset(ctx.getSource(),
+                            IntegerArgumentType.getInteger(ctx, "id")))))
+        );
     }
 
     // ─── Подкоманды ─────────────────────────────────────────────────────────────
 
-    /** /bot spawn [x y z] */
-    private void cmdSpawn(ICommandSender sender, String[] args) {
-        double x = sender.getPlayerCoordinates().posX;
-        double y = sender.getPlayerCoordinates().posY;
-        double z = sender.getPlayerCoordinates().posZ + 2.0;
+    private static int spawnBot(CommandSourceStack source, Vec3 pos) {
+        ServerLevel level = source.getLevel();
+        Vec3 spawnPos = (pos != null) ? pos : source.getPosition().add(0, 0, 2);
 
-        if (args.length >= 4) {
-            try {
-                x = Double.parseDouble(args[1]);
-                y = Double.parseDouble(args[2]);
-                z = Double.parseDouble(args[3]);
-            } catch (NumberFormatException e) {
-                sender.addChatMessage(msg(COLOR_ERROR + "Invalid coordinates: " + args[1] + " " + args[2] + " " + args[3]));
-                return;
-            }
-        }
-
-        WorldServer world = getOverworld();
-        EntityAutonomousBot bot = new EntityAutonomousBot(world);
-        bot.setPosition(x, y, z);
-        bot.setBotMode(ConfigHandler.defaultMode);
+        EntityAutonomousBot bot = new EntityAutonomousBot(AutonomousBot.BOT_TYPE.get(), level);
+        bot.moveTo(spawnPos.x, spawnPos.y, spawnPos.z, 0, 0);
+        bot.setBotMode(ConfigHandler.getDefaultMode());
         bot.applyConfigStats(
-            ConfigHandler.maxHealth,
-            ConfigHandler.moveSpeed,
-            ConfigHandler.attackDamage
+            ConfigHandler.getMaxHealth(),
+            ConfigHandler.getMoveSpeed(),
+            ConfigHandler.getAttackDamage()
         );
 
-        if (world.spawnEntityInWorld(bot)) {
-            sender.addChatMessage(msg(
-                COLOR_OK + "Bot spawned! " +
-                COLOR_INFO + "ID: " + bot.getEntityId() +
-                COLOR_RESET + " | Mode: " + COLOR_HEADER + bot.getBotMode().getDisplayName() +
-                COLOR_RESET + " | Pos: " + fmt(x) + ", " + fmt(y) + ", " + fmt(z)
-            ));
+        if (level.addFreshEntity(bot)) {
+            source.sendSuccess(() -> Component.literal(
+                ChatFormatting.GREEN + "Bot spawned! " +
+                ChatFormatting.AQUA + "ID: " + bot.getId() +
+                ChatFormatting.WHITE + " | Mode: " +
+                ChatFormatting.YELLOW + bot.getBotMode().getDisplayName() +
+                ChatFormatting.WHITE + " | Pos: " + fmt(spawnPos.x) + ", " + fmt(spawnPos.y) + ", " + fmt(spawnPos.z)
+            ), false);
+            return 1;
         } else {
-            sender.addChatMessage(msg(COLOR_ERROR + "Failed to spawn bot at those coordinates!"));
+            source.sendFailure(Component.literal("Failed to spawn bot at those coordinates!"));
+            return 0;
         }
     }
 
-    /** /bot kill <id> */
-    private void cmdKill(ICommandSender sender, String[] args) {
-        if (args.length < 2) {
-            sender.addChatMessage(msg(COLOR_ERROR + "Usage: /bot kill <id>")); return;
-        }
-        EntityAutonomousBot bot = findBot(sender, args[1]);
-        if (bot == null) return;
-
-        bot.setDead();
-        sender.addChatMessage(msg(COLOR_OK + "Bot " + bot.getEntityId() + " removed."));
+    private static int killBot(CommandSourceStack source, int id) {
+        EntityAutonomousBot bot = findBot(source, id);
+        if (bot == null) return 0;
+        bot.discard();
+        source.sendSuccess(() -> Component.literal(
+            ChatFormatting.GREEN + "Bot " + id + " removed."
+        ), false);
+        return 1;
     }
 
-    /** /bot mode <id> <pvp|resource_gathering|building> */
-    private void cmdMode(ICommandSender sender, String[] args) {
-        if (args.length < 3) {
-            sender.addChatMessage(msg(COLOR_ERROR + "Usage: /bot mode <id> <pvp|resource_gathering|building>")); return;
-        }
-        EntityAutonomousBot bot = findBot(sender, args[1]);
-        if (bot == null) return;
-
-        BotMode newMode = BotMode.fromString(args[2]);
+    private static int setMode(CommandSourceStack source, int id, String modeStr) {
+        EntityAutonomousBot bot = findBot(source, id);
+        if (bot == null) return 0;
+        BotMode newMode = BotMode.fromString(modeStr);
         bot.setBotMode(newMode);
-        sender.addChatMessage(msg(
-            COLOR_OK + "Bot " + bot.getEntityId() + " → mode: " +
-            COLOR_HEADER + newMode.getDisplayName()
-        ));
+        source.sendSuccess(() -> Component.literal(
+            ChatFormatting.GREEN + "Bot " + id + " → mode: " +
+            ChatFormatting.YELLOW + newMode.getDisplayName()
+        ), false);
+        return 1;
     }
 
-    /** /bot info <id> */
-    private void cmdInfo(ICommandSender sender, String[] args) {
-        if (args.length < 2) {
-            sender.addChatMessage(msg(COLOR_ERROR + "Usage: /bot info <id>")); return;
+    private static int botInfo(CommandSourceStack source, int id) {
+        EntityAutonomousBot bot = findBot(source, id);
+        if (bot == null) return 0;
+
+        int usedSlots = 0;
+        for (net.minecraft.world.item.ItemStack s : bot.getBotInventory()) {
+            if (!s.isEmpty()) usedSlots++;
         }
-        EntityAutonomousBot bot = findBot(sender, args[1]);
-        if (bot == null) return;
+        int finalUsed = usedSlots;
 
-        sender.addChatMessage(msg(COLOR_HEADER + "=== Bot #" + bot.getEntityId() + " ==="));
-        sender.addChatMessage(msg(COLOR_INFO + "Mode:  " + COLOR_RESET + bot.getBotMode().getDisplayName()));
-        sender.addChatMessage(msg(COLOR_INFO + "HP:    " + COLOR_RESET + fmt(bot.getHealth()) + " / " + fmt(bot.getMaxHealth())));
-        sender.addChatMessage(msg(COLOR_INFO + "Pos:   " + COLOR_RESET + fmt(bot.posX) + ", " + fmt(bot.posY) + ", " + fmt(bot.posZ)));
-
-        int itemCount = 0;
-        for (net.minecraft.item.ItemStack s : bot.getBotInventory()) { if (s != null) itemCount++; }
-        sender.addChatMessage(msg(COLOR_INFO + "Inventory slots used: " + COLOR_RESET + itemCount + " / 27"));
+        source.sendSuccess(() -> Component.literal(
+            ChatFormatting.YELLOW + "=== Bot #" + id + " ===\n" +
+            ChatFormatting.AQUA + "Mode:      " + ChatFormatting.WHITE + bot.getBotMode().getDisplayName() + "\n" +
+            ChatFormatting.AQUA + "HP:        " + ChatFormatting.WHITE + fmt(bot.getHealth()) + " / " + fmt(bot.getMaxHealth()) + "\n" +
+            ChatFormatting.AQUA + "Pos:       " + ChatFormatting.WHITE + fmt(bot.getX()) + ", " + fmt(bot.getY()) + ", " + fmt(bot.getZ()) + "\n" +
+            ChatFormatting.AQUA + "Inventory: " + ChatFormatting.WHITE + finalUsed + " / 27 slots used"
+        ), false);
+        return 1;
     }
 
-    /** /bot list */
-    private void cmdList(ICommandSender sender) {
-        List<EntityAutonomousBot> bots = getAllBots();
+    private static int listBots(CommandSourceStack source) {
+        List<EntityAutonomousBot> bots = getAllBots(source);
         if (bots.isEmpty()) {
-            sender.addChatMessage(msg(COLOR_HEADER + "No active bots.")); return;
+            source.sendSuccess(() -> Component.literal(
+                ChatFormatting.YELLOW + "No active bots."
+            ), false);
+            return 0;
         }
-        sender.addChatMessage(msg(COLOR_HEADER + "Active Bots (" + bots.size() + "):"));
+        StringBuilder sb = new StringBuilder(ChatFormatting.YELLOW + "Active Bots (" + bots.size() + "):\n");
         for (EntityAutonomousBot b : bots) {
-            sender.addChatMessage(msg(
-                COLOR_INFO + "  #" + b.getEntityId() +
-                COLOR_RESET + " | " + b.getBotMode().getDisplayName() +
-                " | HP " + fmt(b.getHealth()) + "/" + fmt(b.getMaxHealth()) +
-                " | " + fmt(b.posX) + "," + fmt(b.posY) + "," + fmt(b.posZ)
-            ));
+            sb.append(ChatFormatting.AQUA).append("  #").append(b.getId())
+              .append(ChatFormatting.WHITE).append(" | ").append(b.getBotMode().getDisplayName())
+              .append(" | HP ").append(fmt(b.getHealth())).append("/").append(fmt(b.getMaxHealth()))
+              .append(" | ").append(fmt(b.getX())).append(", ").append(fmt(b.getY())).append(", ").append(fmt(b.getZ()))
+              .append("\n");
         }
+        String msg = sb.toString();
+        source.sendSuccess(() -> Component.literal(msg), false);
+        return bots.size();
     }
 
-    /** /bot buildreset <id> */
-    private void cmdBuildReset(ICommandSender sender, String[] args) {
-        if (args.length < 2) {
-            sender.addChatMessage(msg(COLOR_ERROR + "Usage: /bot buildreset <id>")); return;
-        }
-        EntityAutonomousBot bot = findBot(sender, args[1]);
-        if (bot == null) return;
+    private static int buildReset(CommandSourceStack source, int id) {
+        EntityAutonomousBot bot = findBot(source, id);
+        if (bot == null) return 0;
 
-        // Найдём BotAIBuildShelter в задачах бота и сбросим флаг
-        for (Object taskEntry : bot.tasks.taskEntries) {
-            net.minecraft.entity.ai.EntityAITasks.EntityAITaskEntry entry =
-                (net.minecraft.entity.ai.EntityAITasks.EntityAITaskEntry) taskEntry;
-            if (entry.action instanceof com.autonomousbot.ai.BotAIBuildShelter) {
-                ((com.autonomousbot.ai.BotAIBuildShelter) entry.action).resetShelterFlag();
-                sender.addChatMessage(msg(COLOR_OK + "Shelter flag reset for bot " + bot.getEntityId() + "."));
-                return;
-            }
+        if (bot.resetBuildShelterFlag()) {
+            source.sendSuccess(() -> Component.literal(
+                ChatFormatting.GREEN + "Shelter flag reset for bot " + id + "."
+            ), false);
+            return 1;
         }
-        sender.addChatMessage(msg(COLOR_ERROR + "Could not find build task on bot " + bot.getEntityId()));
+        source.sendFailure(Component.literal("Could not find build task on bot " + id));
+        return 0;
     }
 
-    // ─── Help ───────────────────────────────────────────────────────────────────
-
-    private void showHelp(ICommandSender sender) {
-        sender.addChatMessage(msg(COLOR_HEADER + "=== Autonomous Bot Commands ==="));
-        sender.addChatMessage(msg(COLOR_OK + "/bot spawn [x y z]" + COLOR_RESET + " — spawn a bot"));
-        sender.addChatMessage(msg(COLOR_OK + "/bot kill <id>" + COLOR_RESET + " — remove a bot"));
-        sender.addChatMessage(msg(COLOR_OK + "/bot mode <id> <pvp|resource_gathering|building>" + COLOR_RESET + " — set mode"));
-        sender.addChatMessage(msg(COLOR_OK + "/bot info <id>" + COLOR_RESET + " — show bot details"));
-        sender.addChatMessage(msg(COLOR_OK + "/bot list" + COLOR_RESET + " — list all bots"));
-        sender.addChatMessage(msg(COLOR_OK + "/bot buildreset <id>" + COLOR_RESET + " — allow bot to build again"));
+    private static int showHelp(CommandSourceStack source) {
+        source.sendSuccess(() -> Component.literal(
+            ChatFormatting.YELLOW + "=== Autonomous Bot Commands ===\n" +
+            ChatFormatting.GREEN + "/bot spawn [x y z]" + ChatFormatting.WHITE + " — spawn a bot\n" +
+            ChatFormatting.GREEN + "/bot kill <id>" + ChatFormatting.WHITE + " — remove a bot\n" +
+            ChatFormatting.GREEN + "/bot mode <id> <pvp|resource_gathering|building>" + ChatFormatting.WHITE + " — set mode\n" +
+            ChatFormatting.GREEN + "/bot info <id>" + ChatFormatting.WHITE + " — show bot details\n" +
+            ChatFormatting.GREEN + "/bot list" + ChatFormatting.WHITE + " — list all bots\n" +
+            ChatFormatting.GREEN + "/bot buildreset <id>" + ChatFormatting.WHITE + " — allow bot to build again"
+        ), false);
+        return 1;
     }
 
     // ─── Утилиты ────────────────────────────────────────────────────────────────
 
-    private ChatComponentText msg(String text) {
-        return new ChatComponentText(text);
-    }
-
-    private String fmt(double v) { return String.valueOf((int) v); }
-    private String fmt(float  v) { return String.valueOf((int) v); }
-
-    @SuppressWarnings("unchecked")
-    private List<EntityAutonomousBot> getAllBots() {
-        List<EntityAutonomousBot> result = new ArrayList<EntityAutonomousBot>();
-        for (WorldServer world : MinecraftServer.getServer().worldServers) {
-            if (world == null) continue;
-            for (Object e : (List<?>) world.loadedEntityList) {
-                if (e instanceof EntityAutonomousBot) {
-                    result.add((EntityAutonomousBot) e);
-                }
+    private static List<EntityAutonomousBot> getAllBots(CommandSourceStack source) {
+        List<EntityAutonomousBot> result = new ArrayList<>();
+        for (ServerLevel level : source.getServer().getAllLevels()) {
+            for (Entity e : level.getEntities().getAll()) {
+                if (e instanceof EntityAutonomousBot bot) result.add(bot);
             }
         }
         return result;
     }
 
-    private EntityAutonomousBot findBot(ICommandSender sender, String idStr) {
-        int id;
-        try { id = Integer.parseInt(idStr); }
-        catch (NumberFormatException e) {
-            sender.addChatMessage(msg(COLOR_ERROR + "Invalid ID: " + idStr));
-            return null;
+    private static EntityAutonomousBot findBot(CommandSourceStack source, int id) {
+        for (EntityAutonomousBot b : getAllBots(source)) {
+            if (b.getId() == id) return b;
         }
-        for (EntityAutonomousBot b : getAllBots()) {
-            if (b.getEntityId() == id) return b;
-        }
-        sender.addChatMessage(msg(COLOR_ERROR + "Bot with ID " + id + " not found!"));
+        source.sendFailure(Component.literal("Bot with ID " + id + " not found!"));
         return null;
     }
 
-    private WorldServer getOverworld() {
-        return MinecraftServer.getServer().worldServerForDimension(0);
-    }
-
-    // ─── Tab completion ──────────────────────────────────────────────────────────
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public List addTabCompletionOptions(ICommandSender sender, String[] args) {
-        if (args.length == 1) {
-            return getListOfStringsMatchingLastWord(args,
-                "spawn", "kill", "mode", "info", "list", "buildreset");
-        }
-        if (args.length == 3 && args[0].equalsIgnoreCase("mode")) {
-            return getListOfStringsMatchingLastWord(args,
-                "pvp", "resource_gathering", "building");
-        }
-        return null;
-    }
+    private static String fmt(double v) { return String.valueOf((int) v); }
+    private static String fmt(float  v) { return String.valueOf((int) v); }
 }
