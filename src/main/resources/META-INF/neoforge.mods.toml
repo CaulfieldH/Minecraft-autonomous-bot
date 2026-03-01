@@ -1,0 +1,32 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="MIT"
+issueTrackerURL="https://github.com/CaulfieldH/Minecraft-autonomous-bot/issues"
+
+[[mods]]
+    modId="autonomousbot"
+    version="${file.jarVersion}"
+    displayName="Autonomous Bot"
+    description='''
+Autonomous Bot adds a configurable NPC bot to Minecraft 1.21.1 with three AI modes:
+  - Resource Gathering: automatically mines ores, logs and stone
+  - Building: constructs a simple 5x5x4 shelter
+  - PvP: hunts and attacks nearby players
+
+Control with: /bot spawn|kill|mode|info|list|buildreset
+Configure in: config/autonomousbot-common.toml
+'''
+
+[[dependencies.autonomousbot]]
+    modId="neoforge"
+    type="required"
+    versionRange="[21.1,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.autonomousbot]]
+    modId="minecraft"
+    type="required"
+    versionRange="[1.21.1,1.22)"
+    ordering="NONE"
+    side="BOTH"

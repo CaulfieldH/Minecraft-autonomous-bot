@@ -2,206 +2,171 @@ package com.autonomousbot.ai;
 
 import com.autonomousbot.ConfigHandler;
 import com.autonomousbot.entity.EntityAutonomousBot;
-import net.minecraft.block.Block;
-import net.minecraft.entity.ai.EntityAIBase;
-import net.minecraft.init.Blocks;
-import net.minecraft.util.MathHelper;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.util.Mth;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+
+import java.util.EnumSet;
 
 /**
- * AI-задача: автономный сбор ресурсов.
+ * AI-задача: автономный сбор ресурсов (Minecraft 1.21.1).
  *
- * Приоритет добычи (от высшего к низшему):
- *   алмазная руда → золотая → железная → угольная → дерево → камень/песок
+ * Приоритет добычи: алмаз → золото → железо → уголь → дерево → камень/песок/гравий
+ * Использует теги блоков (BlockTags) — автоматически охватывает обычную и
+ * глубинную (deepslate) разновидности руды.
  *
  * Алгоритм:
- *  1. Обход сетки блоков в радиусе gatheringRange (конфиг).
- *  2. Выбор цели с наибольшим приоритетом (ближайшей при равном приоритете).
+ *  1. Обход сетки блоков в радиусе gatheringRange (шаг 2 для экономии CPU).
+ *  2. Выбор цели с наибольшим приоритетом (при равном — ближайшей).
  *  3. Движение к цели.
- *  4. Когда бот рядом — "ломает" блок за breakTime тиков.
- *  5. Блок удаляется, дроп появляется в мире (будет подобран BotAICollectItems).
+ *  4. «Добыча» за breakTime тиков (анимационная задержка).
+ *  5. Блок удаляется, дроп появляется в мире (подберёт BotAICollectItems).
  */
-public class BotAIGatherResources extends EntityAIBase {
+public class BotAIGatherResources extends Goal {
 
-    // Тиков на разрушение блока (при 20 TPS: 40 тиков = 2 сек)
-    private static final int BREAK_TICKS_WOOD  = 40;
-    private static final int BREAK_TICKS_STONE = 60;
-    private static final int BREAK_TICKS_ORE   = 80;
-
-    // Задержка перед повторным поиском при отсутствии ресурсов
-    private static final int SEARCH_COOLDOWN = 80;
-
-    // Радиус «рядом» (в квадратных блоках)
-    private static final double NEAR_RANGE_SQ = 9.0;
+    private static final int    BREAK_TICKS_WOOD  = 40;
+    private static final int    BREAK_TICKS_ORE   = 80;
+    private static final int    BREAK_TICKS_STONE = 60;
+    private static final int    SEARCH_COOLDOWN   = 80;
+    private static final double NEAR_RANGE_SQ     = 9.0;
 
     private final EntityAutonomousBot bot;
 
-    private int targetX, targetY, targetZ;
-    private boolean hasTarget    = false;
-    private int     breakTimer   = 0;
-    private int     searchCooldown = 0;
+    private BlockPos target        = null;
+    private int      breakTimer    = 0;
+    private int      searchCooldown = 0;
 
     public BotAIGatherResources(EntityAutonomousBot bot) {
         this.bot = bot;
-        this.setMutexBits(3);
+        this.setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
     }
 
-    // ─── Lifecycle ──────────────────────────────────────────────────────────────
+    // ─── Lifecycle ───────────────────────────────────────────────────────────────
+
+    @Override public boolean canUse()           { return bot.getBotMode() == BotMode.RESOURCE_GATHERING; }
+    @Override public boolean canContinueToUse() { return bot.getBotMode() == BotMode.RESOURCE_GATHERING; }
 
     @Override
-    public boolean shouldExecute() {
-        return bot.getBotMode() == BotMode.RESOURCE_GATHERING;
-    }
+    public void start() { findResource(); }
 
     @Override
-    public boolean continueExecuting() {
-        return bot.getBotMode() == BotMode.RESOURCE_GATHERING;
-    }
+    public void tick() {
+        if (searchCooldown > 0) { searchCooldown--; return; }
 
-    @Override
-    public void startExecuting() {
-        findResource();
-    }
-
-    @Override
-    public void updateTask() {
-        // Кулдаун поиска
-        if (searchCooldown > 0) {
-            searchCooldown--;
-            return;
-        }
-
-        if (!hasTarget) {
+        if (target == null) {
             findResource();
             searchCooldown = SEARCH_COOLDOWN;
             return;
         }
 
-        World world = bot.worldObj;
-        Block currentBlock = world.getBlock(targetX, targetY, targetZ);
+        Level level = bot.level();
+        BlockState state = level.getBlockState(target);
 
-        // Блок уже сломан (кем-то ещё или самим ботом)
-        if (!isTargetResource(currentBlock)) {
-            hasTarget  = false;
-            breakTimer = 0;
+        if (!isTargetResource(state)) {
+            target = null; breakTimer = 0;
             return;
         }
 
-        double distSq = bot.getDistanceSq(
-            targetX + 0.5, targetY + 0.5, targetZ + 0.5
+        double distSq = bot.distanceToSqr(
+            target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5
         );
 
         if (distSq > NEAR_RANGE_SQ) {
-            // Двигаемся к блоку
-            bot.getNavigator().tryMoveToXYZ(targetX + 0.5, targetY, targetZ + 0.5, 0.7);
+            bot.getNavigation().moveTo(target.getX() + 0.5, target.getY(), target.getZ() + 0.5, 0.7);
             breakTimer = 0;
         } else {
-            // Стоим рядом — ломаем
-            bot.getNavigator().clearPathEntity();
-            bot.getLookHelper().setLookPosition(
-                targetX + 0.5, targetY + 0.5, targetZ + 0.5, 10, 10
+            bot.getNavigation().stop();
+            bot.getLookControl().setLookAt(
+                target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5, 10, 10
             );
-
             breakTimer++;
-            if (breakTimer >= getBreakTime(currentBlock)) {
-                breakBlock(world, targetX, targetY, targetZ);
-                hasTarget  = false;
-                breakTimer = 0;
+            if (breakTimer >= getBreakTime(state)) {
+                breakBlock(level, target, state);
+                target = null; breakTimer = 0;
             }
         }
     }
 
     @Override
-    public void resetTask() {
-        hasTarget     = false;
-        breakTimer    = 0;
-        searchCooldown = 0;
-        bot.getNavigator().clearPathEntity();
+    public void stop() {
+        target = null; breakTimer = 0; searchCooldown = 0;
+        bot.getNavigation().stop();
     }
 
-    // ─── Вспомогательные методы ─────────────────────────────────────────────────
+    // ─── Поиск ресурса ───────────────────────────────────────────────────────────
 
     private void findResource() {
-        World world = bot.worldObj;
-        int bx = MathHelper.floor_double(bot.posX);
-        int by = MathHelper.floor_double(bot.posY);
-        int bz = MathHelper.floor_double(bot.posZ);
-        int range = ConfigHandler.gatheringRange;
+        Level level  = bot.level();
+        int bx       = Mth.floor(bot.getX());
+        int by       = Mth.floor(bot.getY());
+        int bz       = Mth.floor(bot.getZ());
+        int range    = ConfigHandler.getGatheringRange();
 
-        int    bestX = -1, bestY = -1, bestZ = -1;
-        double bestDist    = Double.MAX_VALUE;
-        int    bestPriority = Integer.MAX_VALUE;
+        BlockPos bestPos  = null;
+        double   bestDist = Double.MAX_VALUE;
+        int      bestPrio = Integer.MAX_VALUE;
 
-        // Шаг 2 для снижения нагрузки на CPU (пропускаем каждый второй блок)
         for (int dx = -range; dx <= range; dx += 2) {
             for (int dy = -5; dy <= 15; dy++) {
                 for (int dz = -range; dz <= range; dz += 2) {
-                    int x = bx + dx, y = by + dy, z = bz + dz;
-                    Block block = world.getBlock(x, y, z);
-                    if (!isTargetResource(block)) continue;
+                    BlockPos pos   = new BlockPos(bx + dx, by + dy, bz + dz);
+                    BlockState state = level.getBlockState(pos);
+                    if (!isTargetResource(state)) continue;
 
-                    int    priority = getResourcePriority(block);
-                    double dist     = bot.getDistanceSq(x + 0.5, y + 0.5, z + 0.5);
+                    int    prio = getResourcePriority(state);
+                    double dist = bot.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
 
-                    if (priority < bestPriority ||
-                       (priority == bestPriority && dist < bestDist)) {
-                        bestPriority = priority;
-                        bestDist     = dist;
-                        bestX = x; bestY = y; bestZ = z;
+                    if (prio < bestPrio || (prio == bestPrio && dist < bestDist)) {
+                        bestPrio = prio; bestDist = dist; bestPos = pos;
                     }
                 }
             }
         }
-
-        if (bestX != -1) {
-            targetX = bestX; targetY = bestY; targetZ = bestZ;
-            hasTarget = true;
-        } else {
-            hasTarget = false;
-        }
+        target = bestPos;
     }
 
-    private boolean isTargetResource(Block block) {
-        return block == Blocks.log        || block == Blocks.log2       ||
-               block == Blocks.diamond_ore || block == Blocks.gold_ore   ||
-               block == Blocks.iron_ore   || block == Blocks.coal_ore   ||
-               block == Blocks.stone      || block == Blocks.sand        ||
-               block == Blocks.gravel;
+    private boolean isTargetResource(BlockState state) {
+        return state.is(BlockTags.LOGS)
+            || state.is(BlockTags.COAL_ORES)
+            || state.is(BlockTags.IRON_ORES)
+            || state.is(BlockTags.GOLD_ORES)
+            || state.is(BlockTags.DIAMOND_ORES)
+            || state.is(Blocks.STONE)
+            || state.is(Blocks.SAND)
+            || state.is(Blocks.GRAVEL);
     }
 
-    /** Меньший приоритет = добываем в первую очередь */
-    private int getResourcePriority(Block block) {
-        if (block == Blocks.diamond_ore) return 1;
-        if (block == Blocks.gold_ore)    return 2;
-        if (block == Blocks.iron_ore)    return 3;
-        if (block == Blocks.coal_ore)    return 4;
-        if (block == Blocks.log || block == Blocks.log2) return 5;
-        return 10; // stone, sand, gravel
+    /** Меньший приоритет = добываем первым */
+    private int getResourcePriority(BlockState state) {
+        if (state.is(BlockTags.DIAMOND_ORES)) return 1;
+        if (state.is(BlockTags.GOLD_ORES))    return 2;
+        if (state.is(BlockTags.IRON_ORES))    return 3;
+        if (state.is(BlockTags.COAL_ORES))    return 4;
+        if (state.is(BlockTags.LOGS))         return 5;
+        return 10;
     }
 
-    private int getBreakTime(Block block) {
-        if (block == Blocks.log || block == Blocks.log2)      return BREAK_TICKS_WOOD;
-        if (block == Blocks.diamond_ore || block == Blocks.gold_ore ||
-            block == Blocks.iron_ore    || block == Blocks.coal_ore) return BREAK_TICKS_ORE;
+    private int getBreakTime(BlockState state) {
+        if (state.is(BlockTags.LOGS))
+            return BREAK_TICKS_WOOD;
+        if (state.is(BlockTags.COAL_ORES) || state.is(BlockTags.IRON_ORES)
+                || state.is(BlockTags.GOLD_ORES) || state.is(BlockTags.DIAMOND_ORES))
+            return BREAK_TICKS_ORE;
         return BREAK_TICKS_STONE;
     }
 
-    private void breakBlock(World world, int x, int y, int z) {
-        Block block = world.getBlock(x, y, z);
-        if (block == Blocks.air) return;
-
-        int meta = world.getBlockMetadata(x, y, z);
-
-        // Звук разрушения блока
-        world.playAuxSFXAtEntity(
-            null, 2001, x, y, z,
-            Block.getIdFromBlock(block) + (meta << 12)
-        );
-
+    private void breakBlock(Level level, BlockPos pos, BlockState state) {
+        if (state.isAir()) return;
+        // Частицы и звук разрушения блока
+        level.levelEvent(2001, pos, Block.getId(state));
         // Выпадение предметов (подберёт BotAICollectItems)
-        block.dropBlockAsItem(world, x, y, z, meta, 0);
-
-        // Удалить блок
-        world.setBlockToAir(x, y, z);
+        Block.dropResources(state, level, pos);
+        // Удаление блока
+        level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
     }
 }

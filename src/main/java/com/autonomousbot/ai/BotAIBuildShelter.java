@@ -1,92 +1,87 @@
 package com.autonomousbot.ai;
 
 import com.autonomousbot.entity.EntityAutonomousBot;
-import net.minecraft.block.Block;
-import net.minecraft.entity.ai.EntityAIBase;
-import net.minecraft.init.Blocks;
-import net.minecraft.util.MathHelper;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.util.Mth;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 
 /**
- * AI-задача: постройка простого укрытия.
+ * AI-задача: постройка простого укрытия 5×5×4 (Minecraft 1.21.1).
  *
- * Схема постройки — 5×5×4 коробка:
- *  - y=0..2 : стены по периметру (зазор в двери: dz=0, dx=2, y=0 и y=1)
- *  - y=3    : полная крыша 5×5
+ * Схема:
+ *  y=0..1 : стены-периметр (дверной проём: dz=0, dx=2, y=0 и y=1)
+ *  y=2    : стены-периметр (полностью)
+ *  y=3    : полная крыша 5×5
  *
- * Материал: сначала берём Dirt, затем Cobblestone (если нарыли камня).
+ * Материал: Dirt (можно расширить на Cobblestone при наличии в инвентаре).
  * После постройки задача отключается (shelterBuilt = true).
- * Сброс флага: /bot buildreset <id>  или смена режима.
+ * Сброс флага: /bot buildreset <id>
  */
-public class BotAIBuildShelter extends EntityAIBase {
+public class BotAIBuildShelter extends Goal {
 
-    private static final int PLACE_DELAY_TICKS = 5;   // задержка между укладкой блоков
-    private static final double REACH_SQ       = 16.0; // 4 блока
+    private static final int    PLACE_DELAY_TICKS = 5;
+    private static final double REACH_SQ          = 16.0; // 4 блока
 
     private final EntityAutonomousBot bot;
 
-    private boolean shelterBuilt   = false;
-    private int     originX, originY, originZ;
-    private final List<int[]> buildQueue = new ArrayList<int[]>();
-    private int  queueIndex   = 0;
-    private int  placeCooldown = 0;
+    private boolean       shelterBuilt = false;
+    private int           originX, originY, originZ;
+    private final List<int[]> buildQueue = new ArrayList<>();
+    private int           queueIndex   = 0;
+    private int           placeCooldown = 0;
 
     public BotAIBuildShelter(EntityAutonomousBot bot) {
         this.bot = bot;
-        this.setMutexBits(3);
+        this.setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
     }
 
-    // ─── Lifecycle ──────────────────────────────────────────────────────────────
+    // ─── Lifecycle ───────────────────────────────────────────────────────────────
 
     @Override
-    public boolean shouldExecute() {
+    public boolean canUse() {
         return bot.getBotMode() == BotMode.BUILDING && !shelterBuilt;
     }
 
     @Override
-    public boolean continueExecuting() {
+    public boolean canContinueToUse() {
         return bot.getBotMode() == BotMode.BUILDING
             && !shelterBuilt
             && queueIndex < buildQueue.size();
     }
 
     @Override
-    public void startExecuting() {
-        findOriginAndPlan();
-    }
+    public void start() { findOriginAndPlan(); }
 
     @Override
-    public void updateTask() {
-        if (placeCooldown > 0) {
-            placeCooldown--;
-            return;
-        }
+    public void tick() {
+        if (placeCooldown > 0) { placeCooldown--; return; }
 
         if (queueIndex >= buildQueue.size()) {
             shelterBuilt = true;
             return;
         }
 
-        int[] pos    = buildQueue.get(queueIndex);
-        int worldX   = originX + pos[0];
-        int worldY   = originY + pos[1];
-        int worldZ   = originZ + pos[2];
+        int[] rel   = buildQueue.get(queueIndex);
+        int wx      = originX + rel[0];
+        int wy      = originY + rel[1];
+        int wz      = originZ + rel[2];
+        BlockPos bp = new BlockPos(wx, wy, wz);
 
-        double distSq = bot.getDistanceSq(worldX + 0.5, worldY + 0.5, worldZ + 0.5);
+        double distSq = bot.distanceToSqr(wx + 0.5, wy + 0.5, wz + 0.5);
 
         if (distSq > REACH_SQ) {
-            // Двигаемся ближе к месту укладки
-            bot.getNavigator().tryMoveToXYZ(worldX + 0.5, worldY, worldZ + 0.5, 0.7);
+            bot.getNavigation().moveTo(wx + 0.5, wy, wz + 0.5, 0.7);
         } else {
-            // Укладываем блок
-            bot.getNavigator().clearPathEntity();
-            World world = bot.worldObj;
-
-            if (world.getBlock(worldX, worldY, worldZ) == Blocks.air) {
-                world.setBlock(worldX, worldY, worldZ, chooseMaterial());
+            bot.getNavigation().stop();
+            Level level = bot.level();
+            if (level.getBlockState(bp).isAir()) {
+                level.setBlock(bp, Blocks.DIRT.defaultBlockState(), 3);
                 placeCooldown = PLACE_DELAY_TICKS;
             }
             queueIndex++;
@@ -94,48 +89,42 @@ public class BotAIBuildShelter extends EntityAIBase {
     }
 
     @Override
-    public void resetTask() {
+    public void stop() {
         queueIndex    = 0;
         placeCooldown = 0;
-        bot.getNavigator().clearPathEntity();
+        bot.getNavigation().stop();
     }
 
-    /** Сброс флага «укрытие построено» (вызывается командой /bot buildreset) */
+    /** Сброс флага «укрытие построено» (вызывается через EntityAutonomousBot). */
     public void resetShelterFlag() {
         shelterBuilt = false;
         queueIndex   = 0;
         buildQueue.clear();
     }
 
-    // ─── Вспомогательные методы ─────────────────────────────────────────────────
+    // ─── Планирование постройки ──────────────────────────────────────────────────
 
     private void findOriginAndPlan() {
-        // Ставим укрытие на 10 блоков к востоку от текущей позиции
-        originX = MathHelper.floor_double(bot.posX) + 10;
-        originZ = MathHelper.floor_double(bot.posZ);
-        originY = MathHelper.floor_double(bot.posY);
+        originX = Mth.floor(bot.getX()) + 10;
+        originZ = Mth.floor(bot.getZ());
+        originY = Mth.floor(bot.getY());
 
-        // Ищем уровень земли
-        World world = bot.worldObj;
+        Level level = bot.level();
         for (int dy = 5; dy > -10; dy--) {
             int y = originY + dy;
-            if (world.getBlock(originX, y, originZ) != Blocks.air &&
-                world.getBlock(originX, y + 1, originZ) == Blocks.air) {
+            BlockPos base  = new BlockPos(originX, y,     originZ);
+            BlockPos above = new BlockPos(originX, y + 1, originZ);
+            if (!level.getBlockState(base).isAir() && level.getBlockState(above).isAir()) {
                 originY = y + 1;
                 break;
             }
         }
-
         generateBuildPlan();
     }
 
     /**
-     * Генерирует очередь позиций для 5×5×4 укрытия.
-     *
-     * Слои:
-     *   y=0,1 : стены-периметр (кроме дверного проёма dz=0, dx=2)
-     *   y=2   : стены-периметр (полностью)
-     *   y=3   : полная крыша
+     * Генерирует список позиций (dx, dy, dz) для укрытия 5×5×4.
+     * Слои y=0,1 — периметр без дверного проёма; y=2 — периметр; y=3 — крыша.
      */
     private void generateBuildPlan() {
         buildQueue.clear();
@@ -154,13 +143,5 @@ public class BotAIBuildShelter extends EntityAIBase {
                 }
             }
         }
-    }
-
-    private Block chooseMaterial() {
-        // Если набрали булыжник — строим из него; иначе из земли
-        if (bot.countItem(net.minecraft.init.Items.coal) > 0) {
-            // placeholder: используем dirt как базовый материал
-        }
-        return Blocks.dirt;
     }
 }

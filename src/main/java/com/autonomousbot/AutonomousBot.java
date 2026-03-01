@@ -1,87 +1,75 @@
 package com.autonomousbot;
 
 import com.autonomousbot.entity.EntityAutonomousBot;
-import com.autonomousbot.proxy.CommonProxy;
-import cpw.mods.fml.common.Mod;
-import cpw.mods.fml.common.Mod.EventHandler;
-import cpw.mods.fml.common.SidedProxy;
-import cpw.mods.fml.common.event.FMLInitializationEvent;
-import cpw.mods.fml.common.event.FMLPreInitializationEvent;
-import cpw.mods.fml.common.event.FMLServerStartingEvent;
-import cpw.mods.fml.common.registry.EntityRegistry;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
+import net.neoforged.neoforge.registries.DeferredHolder;
+import net.neoforged.neoforge.registries.DeferredRegister;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /**
- * Точка входа мода AutonomousBot для Minecraft 1.7.10 + Forge.
+ * Точка входа мода AutonomousBot для Minecraft 1.21.1 + NeoForge.
  *
  * Мод добавляет автономного NPC-бота с тремя режимами работы:
- *   - resource_gathering : добыча ресурсов (дерево, руда, камень)
- *   - building           : строительство убежища
+ *   - resource_gathering : добыча ресурсов (руда, дерево, камень)
+ *   - building           : строительство укрытия 5×5×4
  *   - pvp                : поиск и атака игроков
  *
- * Управление через команду /bot <spawn|kill|mode|info|list|buildreset>
- * Настройки через config/autonomousbot.cfg
+ * Управление: /bot <spawn|kill|mode|info|list|buildreset>
+ * Конфиг: config/autonomousbot-common.toml
  */
-@Mod(
-    modid   = AutonomousBot.MODID,
-    name    = AutonomousBot.NAME,
-    version = AutonomousBot.VERSION
-)
+@Mod(AutonomousBot.MODID)
 public class AutonomousBot {
 
-    public static final String MODID   = "autonomousbot";
-    public static final String NAME    = "Autonomous Bot";
-    public static final String VERSION = "1.0.0";
-
+    public static final String MODID  = "autonomousbot";
     public static final Logger LOGGER = LogManager.getLogger(MODID);
 
-    @SidedProxy(
-        clientSide = "com.autonomousbot.proxy.ClientProxy",
-        serverSide = "com.autonomousbot.proxy.CommonProxy"
-    )
-    public static CommonProxy proxy;
+    // ─── Регистрация сущности ────────────────────────────────────────────────────
 
-    @Mod.Instance(MODID)
-    public static AutonomousBot instance;
+    public static final DeferredRegister<EntityType<?>> ENTITY_TYPES =
+        DeferredRegister.create(Registries.ENTITY_TYPE, MODID);
 
-    // ─── FML Events ─────────────────────────────────────────────────────────────
-
-    /**
-     * Pre-init: загрузка конфига, регистрация сущности.
-     */
-    @EventHandler
-    public void preInit(FMLPreInitializationEvent event) {
-        ConfigHandler.init(event.getSuggestedConfigurationFile());
-
-        EntityRegistry.registerModEntity(
-            EntityAutonomousBot.class,  // класс сущности
-            "AutonomousBot",            // имя (уникальное в рамках мода)
-            1,                          // mod-local ID
-            this,                       // экземпляр мода
-            64,                         // дальность трекинга (блоки)
-            3,                          // частота обновлений (тиков)
-            true                        // отправлять пакеты скорости
+    public static final DeferredHolder<EntityType<?>, EntityType<EntityAutonomousBot>> BOT_TYPE =
+        ENTITY_TYPES.register("autonomous_bot",
+            () -> EntityType.Builder.<EntityAutonomousBot>of(EntityAutonomousBot::new, MobCategory.MONSTER)
+                .sized(0.6F, 1.8F)
+                .clientTrackingRange(8)
+                .updateInterval(3)
+                .build("autonomousbot:autonomous_bot")
         );
 
-        LOGGER.info("[AutonomousBot] Pre-init complete. Default mode: {}", ConfigHandler.defaultMode.getConfigName());
+    // ─── Конструктор (вызывается NeoForge при загрузке) ─────────────────────────
+
+    public AutonomousBot(IEventBus modEventBus, ModContainer modContainer) {
+        // Регистрируем EntityType
+        ENTITY_TYPES.register(modEventBus);
+
+        // Атрибуты сущности (здоровье, скорость, урон)
+        modEventBus.addListener(this::onEntityAttributeCreation);
+
+        // Команда /bot (серверная шина событий)
+        NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
+
+        // Конфиг (config/autonomousbot-common.toml)
+        modContainer.registerConfig(ModConfig.Type.COMMON, ConfigHandler.SPEC);
+
+        LOGGER.info("[AutonomousBot] Initialized for Minecraft 1.21.1 (NeoForge {})", MODID);
     }
 
-    /**
-     * Init: регистрация рендереров (клиент) / ничего (сервер).
-     */
-    @EventHandler
-    public void init(FMLInitializationEvent event) {
-        proxy.registerRenderers();
-        LOGGER.info("[AutonomousBot] Init complete.");
+    private void onEntityAttributeCreation(EntityAttributeCreationEvent event) {
+        event.put(BOT_TYPE.get(), EntityAutonomousBot.createAttributes().build());
     }
 
-    /**
-     * Server starting: регистрация команды /bot.
-     */
-    @EventHandler
-    public void serverStarting(FMLServerStartingEvent event) {
-        event.registerServerCommand(new CommandBotControl());
-        LOGGER.info("[AutonomousBot] Command '/bot' registered.");
+    private void onRegisterCommands(RegisterCommandsEvent event) {
+        CommandBotControl.register(event.getDispatcher());
     }
 }

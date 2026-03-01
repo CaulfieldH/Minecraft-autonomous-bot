@@ -1,105 +1,94 @@
 package com.autonomousbot.ai;
 
 import com.autonomousbot.entity.EntityAutonomousBot;
-import net.minecraft.entity.ai.EntityAIBase;
-import net.minecraft.entity.item.EntityItem;
-import net.minecraft.item.ItemStack;
-import net.minecraft.util.AxisAlignedBB;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.AABB;
 
+import java.util.EnumSet;
 import java.util.List;
 
 /**
- * AI-задача: подбор выпавших предметов с земли.
+ * AI-задача: подбор выпавших предметов с земли (Minecraft 1.21.1).
  *
  * Активна во всех режимах, кроме PvP с активной целью.
- * Ищет ближайший EntityItem в радиусе COLLECT_RANGE,
+ * Ищет ближайший ItemEntity в радиусе COLLECT_RANGE,
  * идёт к нему и добавляет в инвентарь бота.
  */
-public class BotAICollectItems extends EntityAIBase {
+public class BotAICollectItems extends Goal {
 
-    private static final double COLLECT_RANGE  = 12.0;
-    private static final double PICKUP_RANGE_SQ = 1.0; // 1 блок
+    private static final double COLLECT_RANGE   = 12.0;
+    private static final double PICKUP_RANGE_SQ = 1.0;
 
     private final EntityAutonomousBot bot;
-    private EntityItem targetItem;
+    private ItemEntity targetItem;
 
     public BotAICollectItems(EntityAutonomousBot bot) {
         this.bot = bot;
-        this.setMutexBits(1); // Использует движение, но не взгляд
+        this.setFlags(EnumSet.of(Flag.MOVE));
     }
 
-    // ─── Lifecycle ──────────────────────────────────────────────────────────────
+    // ─── Lifecycle ───────────────────────────────────────────────────────────────
 
     @Override
-    public boolean shouldExecute() {
+    public boolean canUse() {
         // В PvP с активной целью не отвлекаемся на предметы
-        if (bot.getBotMode() == BotMode.PVP && bot.getAttackTarget() != null) {
-            return false;
-        }
+        if (bot.getBotMode() == BotMode.PVP && bot.getTarget() != null) return false;
         targetItem = findNearestItem();
         return targetItem != null;
     }
 
     @Override
-    public boolean continueExecuting() {
-        if (bot.getBotMode() == BotMode.PVP && bot.getAttackTarget() != null) {
-            return false;
-        }
-        return targetItem != null && !targetItem.isDead;
+    public boolean canContinueToUse() {
+        if (bot.getBotMode() == BotMode.PVP && bot.getTarget() != null) return false;
+        return targetItem != null && !targetItem.isRemoved();
     }
 
     @Override
-    public void startExecuting() {
-        // Навигация начнётся в updateTask
-    }
-
-    @Override
-    public void updateTask() {
-        if (targetItem == null || targetItem.isDead) {
+    public void tick() {
+        if (targetItem == null || targetItem.isRemoved()) {
             targetItem = findNearestItem();
             return;
         }
 
-        bot.getLookHelper().setLookPositionWithEntity(targetItem, 10.0F, 10.0F);
-        double distSq = bot.getDistanceSqToEntity(targetItem);
+        bot.getLookControl().setLookAt(targetItem, 10.0F, 10.0F);
+        double distSq = bot.distanceToSqr(targetItem);
 
         if (distSq <= PICKUP_RANGE_SQ) {
-            // Подбираем предмет
-            ItemStack stack = targetItem.getEntityItem();
-            if (stack != null && stack.stackSize > 0) {
+            ItemStack stack = targetItem.getItem();
+            if (!stack.isEmpty()) {
                 bot.addToInventory(stack.copy());
-                targetItem.setDead();
+                targetItem.discard();
             }
             targetItem = null;
         } else {
-            bot.getNavigator().tryMoveToEntityLiving(targetItem, 0.9);
+            bot.getNavigation().moveTo(targetItem, 0.9);
         }
     }
 
     @Override
-    public void resetTask() {
+    public void stop() {
         targetItem = null;
-        bot.getNavigator().clearPathEntity();
+        bot.getNavigation().stop();
     }
 
-    // ─── Вспомогательные методы ─────────────────────────────────────────────────
+    // ─── Поиск ближайшего предмета ───────────────────────────────────────────────
 
-    @SuppressWarnings("unchecked")
-    private EntityItem findNearestItem() {
-        AxisAlignedBB searchBox = AxisAlignedBB.getBoundingBox(
-            bot.posX - COLLECT_RANGE, bot.posY - 3, bot.posZ - COLLECT_RANGE,
-            bot.posX + COLLECT_RANGE, bot.posY + 3, bot.posZ + COLLECT_RANGE
+    private ItemEntity findNearestItem() {
+        AABB searchBox = new AABB(
+            bot.getX() - COLLECT_RANGE, bot.getY() - 3, bot.getZ() - COLLECT_RANGE,
+            bot.getX() + COLLECT_RANGE, bot.getY() + 3, bot.getZ() + COLLECT_RANGE
         );
 
-        List<EntityItem> items = (List<EntityItem>)
-            bot.worldObj.getEntitiesWithinAABB(EntityItem.class, searchBox);
+        List<ItemEntity> items = bot.level().getEntitiesOfClass(ItemEntity.class, searchBox);
 
-        EntityItem nearest     = null;
+        ItemEntity nearest    = null;
         double     nearestDist = Double.MAX_VALUE;
 
-        for (EntityItem item : items) {
-            if (item == null || item.isDead) continue;
-            double dist = bot.getDistanceSqToEntity(item);
+        for (ItemEntity item : items) {
+            if (item.isRemoved()) continue;
+            double dist = bot.distanceToSqr(item);
             if (dist < nearestDist) {
                 nearestDist = dist;
                 nearest     = item;
